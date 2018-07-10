@@ -1,0 +1,234 @@
+---
+title: 再啃单例模式
+tags: 
+grammar_cjkRuby: true
+---
+### 为什么要使用单例模式
+当我们频繁地访问数据库或者文件的时候，不断地创建数据库，不断地重复实例化数据库和销毁数据库，导致性能大大降低而且很消耗内存。
+- 优点 
+1.内存里只有一个实例，减少了内存的开销，尤其是频繁地创建和销毁实例。
+2.避免对资源的多重占用。（比如写文件操作）
+- 缺点
+没有接口，不能继承，与单一职责原则冲突，一个类只关心内部逻辑，而不关心外面怎么样实例化。
+- 使用意图
+保证一个类仅有一个实例，并提供一个访问它的全局访问点。
+- 何时使用
+当你想控制实例数目，节省系统资源的时候。
+- 应用实例
+1.一个党只能有一个主席
+2.Windows是多进程多线程的，在操作一个文件的时候就不可避免的出现多个进程或者线程统统是操作一个文件的现象。所以所有文件的处理必须通过唯一的实例进行。
+3.一些设备管理器常常设计为单利模式，比如一个电脑有两台打印机，在输出的时候就要处理不能两台打印机打印同一个文件。
+### 手写单例模式
+
+#### 懒汉式，线程不安全。
+当多个线程并行调用 getInstance() 的时候，就会创建多个实例。也就是说在多线程的情况下，不能正常工作。
+
+``` stylus
+public class Singleton {
+
+    private static Singleton instance;
+    
+    private Singleton() {
+    }
+
+    public static Singleton getInstance() {
+        if (instance == null) {
+            instance = new Singleton();
+        }
+        return instance;
+    }
+}
+```
+#### 懒汉式，线程安全
+最简单的方式是在 getInstance() 的方法前面加上 synchronized ，将该方法设置为同步。这个方法虽然做到了线程安全，但是效率并不高。因为在任何时候只能有一个线程调用 getInstance() 方法。但是同步操作只需要在第一次调用的时候才被需要，即第一次创建单例实例对象的时候。
+简单的说就是 instance = null 的时候，才会调用 instance = new Singleton() 。
+但下面的这个方法，让每次线程调用的时候都进行了同步，所以每个线程调用时都需要等待其他线程释放了 getInstance() 方法。
+
+``` smali
+public class Singleton {
+
+    private static Singleton instance;
+
+    private Singleton() {
+    }
+
+    public static synchronized Singleton getInstance() {
+        if (instance == null) {
+            instance = new Singleton();
+        }
+        return instance;
+    }
+}
+```
+#### 双重检验锁
+由于上面的线程安全的懒汉式 效率不高，为了提高效率，就有了双重检验锁模式，(double checked locking pattern) ，是一种同步块加锁的方法。进行了双重检测 instance == null ，一次是在同步块外面，一次是在同步块内部。 为什么在同步块内还需要检测一次呢? 因为可能会有多个线程一起进入了同步块外的 if ，如果在同步块内不进行二次检验的话就会生成多个实例。
+
+``` smali
+public class Singleton {
+
+    private static Singleton instance;
+
+    private Singleton() {
+    }
+
+    public static Singleton getInstance() {
+        if (instance == null) {
+            synchronized (Singleton.class) {
+                if (instance == null) {
+                    instance = new Singleton();
+                }
+            }
+        }
+        return instance;
+    }
+}
+```
+这段代码看起来很完美，但是它有问题，主要是因为 instance = new Singleton() 这句话，并非一个原子操作。
+通过这个博客内容可以了解相关的Java并发编程的知识。
+[Java并发编程：volatile关键字解析][1]
+
+java并发编程中，通常会遇到一下三个问题： 原子性，可见性，有序性
+1.原子性
+在Java中，对基本数据类型的变量的读取和赋值操作是原子性操作，即这些操作是不可以被中断的，要么执行，要么不执行。
+
+``` stylus
+x = 10; // 语句1
+y = x; // 语句2
+x++; // 语句3
+x = x + 1; // 语句4
+```
+只有第一句是原子操作，其他的语句都不是原子操作。
+语句1 是直接将食指10赋值给 x ，线程执行这个语句的时候回直接将数值10写入到工作内存中。
+语句2 包括两个操作，先去读取 x 的只，然后将 x 的值写入工作内存中，虽然读取 x 的值以及将x的值写入到工作内存 这2个操作都是原子性操作，但是合起来就不是原子性操作
+
+同样的 x++ 和 x = x+1 包括 3 个操作： 读取x的值，进行加1操作，写入新的值，
+所以上面4个语句中只有语句1是 原子操作。
+也就是说，只有简单的读取、赋值才是原子操作。
+
+2.可见性
+java 提供了volatile关键字来 保证可见性。
+当一个共享变量被volatile修饰的时候，它会保证修改的值会立即被更新到主存中，当有其他线程需要读取时，它会去内存中读取新值。
+
+而普通的共享变量不能保证可见性，因为普通共享变量被修饰后，什么时候被写入主存是不确定的，当有其他线程去读取的时候，此时内存中可能还是原来的值，因此无法保证可见性。
+
+通过synchronized 和 lock 也能够保证可见性，因为他们能够保证同一时刻只有一个线程获取锁然后执行同步代码，并且在释放锁之前会将变量的修改值刷新到主存中，因此保证可见性。
+
+3.有序性
+
+在 Java 内存模型中，允许编译器和处理器对指令进行重排序，但是重排序过冲中不会影响到单线程程序的执行，却会影响到多线程并发执行的正确性。
+
+在 Java 中，可以通过 volatile 关键字来保证一定的 “有序性” 。另外可以通过synchronized 和 Lock 来保证有序性。
+
+**关键字volatile**
+一旦一个共享变量（类的成员变量，类的静态成员变量）被volatile修饰之后，就具备了两层含义
+1. 保证了不同线程对这个变量操作的可见性，即一个线程修改了某个变量后， 这个性质对其他线程来说是立即可见的。（改变了变量后会立刻刷新到内存中，其他线程中会重新获取内存中的新值）
+2. 禁止进行指令排序。
+
+<img src="http://wx4.sinaimg.cn/large/83029c1egy1ft4lqqrknaj20in0bswi1.jpg" alt="image">
+如图就是Java内存中线程操作模式，线程对于共享变量的操作为，从主内存中拷贝一份到自己的工作内存中，对共享变量修改后又返回到主内存中。
+
+当共享变量被volatile修饰之后，线程1修改了共享变量后，会立即把共享变量的值刷新到主内存当中，然后线程2会发现工作内存中的缓存变量无效，会等待主内存中的变量刷新后更新工作内存中的值。
+
+**volatile 的使用场景**
+synchronized关键字是防止多个线程同时执行一段代码，会很影响程序执行效率，而volatile关键字在某些情况下是无法替代synchronized关键字的，因为volatile无法保证操作的原子性。通常来说volatile的使用必须具备以下2个条件
+
+1. 对变量的写操作不依赖于当前值
+2. 该变量没有包含在具有其他变量的不变式中
+
+回到原话题，双重检验锁中， instance = new Singleton() 不是原子操作，事实上它完成了以下3件事
+
+1. 给 instance 分配内存
+2. 调用Singleton的构造函数来初始化成员变量
+3. 将 instance 对象指向分配的内存空间
+
+但是操作系统可以对指令进行重排序，所以上面的过程可能变成如下的过程
+1.给 instance 分配内存
+2.将 instance 对象指向分配的内存空间
+3.调用Singleton的构造函数来初始化成员变量
+
+这就导致instance已经是非null 却没有被初始化。导致程序错误。在这里我们使用volatile的禁止指令重排的功能，保证操作的有序性，所以我们给共享变量添加volatile 修饰。
+
+``` stylus
+public class Singleton {
+    private volatile static Singleton instance;
+
+    private Singleton() {
+    }
+
+    public static Singleton getInstance() {
+        if (instance == null) {
+            synchronized (Singleton.class) {
+                if (instance == null) {
+                    instance = new Singleton();
+                }
+            }
+        }
+        return instance;
+    }
+}
+```
+#### 饿汉式 
+
+直接将实例声明为 static final ，在第一次加载类到内存中时就会初始化，所以创建实例本身是线程安全的。
+
+``` stylus
+public class Singleton {
+    private static final Singleton instance = new Singleton();
+
+    private Singleton() {
+    }
+
+    public static Singleton getInstance() {
+        return instance;
+    }
+}
+```
+
+这种方式在加载类后一开始就初始化实例了，饿汉式的创建方式在一些场景中将无法使用：譬如 Singleton 实例的创建是依赖参数或者配置文件的，在 getInstance() 之前必须调用某个方法设置参数给它，那样这种单例写法就无法使用了。
+
+#### 静态内部类
+
+``` java
+public class Singleton {
+    private static class SingletonHolder {
+        private static final Singleton INSTANCE = new Singleton();
+    }
+
+    private Singleton() {
+    }
+
+    public static final Singleton getInstance() {
+        return SingletonHolder.INSTANCE;
+    }
+}
+```
+这种写法仍然使用JVM本身机制保证了线程安全问题；由于 SingletonHolder 是私有的，除了 getInstance() 之外没有办法访问它，因此它是懒汉式的；同时读取实例的时候不会进行同步，没有性能缺陷；也不依赖 JDK 版本。
+
+#### 枚举
+
+``` stylus
+public enum Singleton{
+	INSTANCE;
+}
+```
+可以直接通过Singleton.INSTANCE 来访问实例。创建枚举默认是线程安全的。
+
+#### 总结
+一般来说，单例模式有五种写法：懒汉、饿汉、双重检验锁、静态内部类、枚举。上述所说都是线程安全的实现，文章开头给出的第一种方法不算正确的写法。
+
+[
+如何正确的写出单例模式][2]
+[单例模式][3]
+[
+全面详细的单例模式][4]
+
+
+[
+Java并发编程：volatile关键字解析][5]
+
+
+  [1]: https://www.cnblogs.com/dolphin0520/p/3920373.html
+  [2]: http://wuchong.me/blog/2014/08/28/how-to-correctly-write-singleton-pattern/
+  [3]: http://www.runoob.com/design-pattern/singleton-pattern.html
+  [4]: https://blog.csdn.net/carson_ho/article/details/52223097
+  [5]: https://www.cnblogs.com/dolphin0520/p/3920373.html
